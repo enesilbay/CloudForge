@@ -25,3 +25,36 @@ def run_container(image_tag: str, container_name: str, host_port: int, container
     )
     return container
 
+def list_containers():
+    client = docker.from_env()
+    # Sadece bizim oluşturduğumuz (cf-app- ile başlayan) konteynerleri getir
+    containers = client.containers.list(all=True, filters={"name": "cf-app-"})
+    
+    result = []
+    for c in containers:
+        # Konteynerin dışarıya açılan portunu bulmaya çalışıyoruz
+        ports = c.attrs['NetworkSettings']['Ports']
+        host_port = "Bilinmiyor"
+        if ports:
+            for k, v in ports.items():
+                if v:
+                    host_port = v[0]['HostPort']
+                    break
+        
+        result.append({
+            "id": c.short_id,
+            "name": c.name,
+            "status": c.status, # 'running' veya 'exited' döner
+            "port": host_port
+        })
+    return result
+
+def stop_container(container_id: str):
+    client = docker.from_env()
+    container = client.containers.get(container_id)
+    container.stop()
+
+def remove_container(container_id: str):
+    client = docker.from_env()
+    container = client.containers.get(container_id)
+    container.remove(force=True) # force=True çalışıyorsa bile zorla siler
