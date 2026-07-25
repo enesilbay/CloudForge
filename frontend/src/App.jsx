@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 function App() {
   const [repoUrl, setRepoUrl] = useState('');
@@ -7,10 +7,17 @@ function App() {
   const [error, setError] = useState('');
   const [loadingMessage, setLoadingMessage] = useState('Kuyruğa alınıyor...');
   
-  // YENİ: Konteyner listesini tutacağımız state
   const [containers, setContainers] = useState([]);
+  
+  // YENİ SİHİR: Canlı logları tutacağımız state ve otomatik kaydırma referansı
+  const [logs, setLogs] = useState([]);
+  const logsEndRef = useRef(null);
 
-  // YENİ: Backend'den çalışan/duran konteynerleri çeken fonksiyon
+  // Loglar her güncellendiğinde en aşağıya otomatik kaydır
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs]);
+
   const fetchContainers = async () => {
     try {
       const response = await fetch('http://localhost:8000/containers');
@@ -23,30 +30,47 @@ function App() {
     }
   };
 
-  // Sayfa ilk açıldığında konteyner listesini getir
   useEffect(() => {
     fetchContainers();
   }, []);
 
-  // YENİ: Durdurma Fonksiyonu
   const handleStop = async (id) => {
     try {
       await fetch(`http://localhost:8000/containers/${id}/stop`, { method: 'POST' });
-      fetchContainers(); // Tabloyu güncelle
+      fetchContainers();
     } catch (err) {
       alert('Durdurma işlemi başarısız oldu.');
     }
   };
 
-  // YENİ: Silme Fonksiyonu
   const handleDelete = async (id) => {
     if (!window.confirm('Bu uygulamayı tamamen silmek istediğinize emin misiniz?')) return;
     try {
       await fetch(`http://localhost:8000/containers/${id}`, { method: 'DELETE' });
-      fetchContainers(); // Tabloyu güncelle
+      fetchContainers();
     } catch (err) {
       alert('Silme işlemi başarısız oldu.');
     }
+  };
+
+  // YENİ: WebSocket bağlantısını kuran fonksiyon
+  const connectToLogs = (deployId) => {
+    // Backend'deki WebSocket rotamıza bağlanıyoruz
+    const ws = new WebSocket(`ws://localhost:8000/ws/logs/${deployId}`);
+    
+    ws.onmessage = (event) => {
+      // Eğer backend yayını bitirdiğini (EOF) söylerse bağlantıyı kapat
+      if (event.data === "EOF") {
+        ws.close();
+        return;
+      }
+      // Gelen log satırını eski logların sonuna ekle
+      setLogs((prev) => [...prev, event.data]);
+    };
+
+    ws.onerror = (err) => {
+      console.error("WebSocket Hatası:", err);
+    };
   };
 
   const pollTaskStatus = async (taskId) => {
@@ -57,7 +81,7 @@ function App() {
       if (data.status === 'success') {
         setResult(data);
         setLoading(false);
-        fetchContainers(); // YENİ: İşlem bitince tabloyu otomatik güncelle!
+        fetchContainers(); 
       } else if (data.status === 'error') {
         setError(data.message || 'Deploy sırasında bir hata oluştu.');
         setLoading(false);
@@ -77,6 +101,7 @@ function App() {
     setLoading(true);
     setResult(null);
     setError('');
+    setLogs([]); // Yeni deploy başlarken eski logları temizle
     setLoadingMessage('Kuyruğa alınıyor...');
 
     try {
@@ -89,7 +114,12 @@ function App() {
       const data = await response.json();
 
       if (data.status === 'processing') {
-        setLoadingMessage('İnşa ediliyor (1-2 dakika sürebilir)...');
+        setLoadingMessage('İnşa ediliyor...');
+        
+        // YENİ: Deploy başlar başlamaz Log Radyosuna (WebSocket) bağlan!
+        connectToLogs(data.deploy_id);
+        
+        // İşin bitip bitmediğini sormaya devam et
         pollTaskStatus(data.task_id);
       } else if (data.status === 'error') {
         setError(data.message);
@@ -104,7 +134,6 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center py-10 px-4 font-sans">
       
-      {/* KAHRAMAN ALANI */}
       <div className="text-center mb-10">
         <h1 className="text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500 mb-4">
           CloudForge
@@ -114,7 +143,6 @@ function App() {
         </p>
       </div>
 
-      {/* DEPLOY FORMU */}
       <form onSubmit={handleDeploy} className="w-full max-w-3xl bg-gray-800 p-6 rounded-xl shadow-2xl border border-gray-700 mb-8">
         <div className="flex flex-col sm:flex-row gap-4">
           <input
@@ -137,7 +165,7 @@ function App() {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                 </svg>
-                {loadingMessage}
+                Deploying
               </span>
             ) : (
               'Deploy Et'
@@ -146,7 +174,28 @@ function App() {
         </div>
       </form>
 
-      {/* BİLDİRİMLER (HATA / BAŞARI) */}
+      {/* YENİ SİHİR: CANLI LOG TERMİNALİ */}
+      {(loading || logs.length > 0) && (
+        <div className="w-full max-w-3xl mb-8 bg-black rounded-xl shadow-2xl border border-gray-700 overflow-hidden font-mono text-sm">
+          {/* Terminal Üst Çubuğu (Mac Görünümü) */}
+          <div className="bg-gray-800 px-4 py-2 flex items-center gap-2 border-b border-gray-700">
+            <div className="w-3 h-3 rounded-full bg-red-500"></div>
+            <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+            <div className="w-3 h-3 rounded-full bg-green-500"></div>
+            <span className="text-gray-400 text-xs ml-2 uppercase font-bold tracking-widest">Build Logs</span>
+          </div>
+          
+          {/* Logların Aktığı Alan */}
+          <div className="p-4 h-64 overflow-y-auto text-green-400 whitespace-pre-wrap">
+            {logs.map((log, index) => (
+              <span key={index}>{log}</span>
+            ))}
+            {/* Sürekli en alta kaydırmak için görünmez bir çapa (anchor) */}
+            <div ref={logsEndRef} />
+          </div>
+        </div>
+      )}
+
       {error && (
         <div className="mb-8 w-full max-w-3xl bg-red-900/50 border border-red-500 text-red-200 p-4 rounded-lg">
           <p className="font-bold">❌ Hata Oluştu</p>
@@ -171,11 +220,11 @@ function App() {
         </div>
       )}
 
-      {/* KONTROL PANELİ (DASHBOARD) */}
+      {/* KONTROL PANELİ */}
       <div className="w-full max-w-4xl bg-gray-800 rounded-xl shadow-2xl border border-gray-700 overflow-hidden mt-4">
         <div className="bg-gray-900 px-6 py-4 border-b border-gray-700 flex justify-between items-center">
           <h2 className="text-xl font-bold text-gray-200">Aktif Uygulamalarınız</h2>
-          <button onClick={fetchContainers} className="text-sm text-blue-400 hover:text-blue-300">
+          <button onClick={fetchContainers} className="text-sm text-blue-400 hover:text-blue-300 transition-colors">
             🔄 Yenile
           </button>
         </div>
@@ -247,7 +296,6 @@ function App() {
           </table>
         </div>
       </div>
-
     </div>
   );
 }

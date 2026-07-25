@@ -1,22 +1,38 @@
 import socket
 import docker
+import redis
 
 def get_free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('', 0))
         return s.getsockname()[1]
 
-def build_image(repo_path: str, image_tag: str):
+# YENİ: deploy_id parametresini ekledik ki hangi kanala anons edeceğimizi bilelim
+def build_image(repo_path: str, image_tag: str, deploy_id: str):
     client = docker.from_env()
-    print(f"İmaj inşa ediliyor: {image_tag}")
-    image, build_logs = client.images.build(path=repo_path, tag=image_tag, rm=True)
-    return image
+    # Redis bağlantımızı kuruyoruz
+    redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+    
+    redis_client.publish(f"logs_{deploy_id}", f"İmaj inşa ediliyor: {image_tag}\n")
+    
+    # SİHİRLİ KISIM: decode=True ile logları satır satır alıyoruz (Kara Kutu yerine)
+    build_logs = client.api.build(path=repo_path, tag=image_tag, rm=True, decode=True)
+    
+    for chunk in build_logs:
+        if 'stream' in chunk:
+            # Docker'dan gelen her yeni satırı anında radyoya (React'e) fırlat
+            log_line = chunk['stream']
+            redis_client.publish(f"logs_{deploy_id}", log_line)
+        elif 'error' in chunk:
+            # Hata olursa kırmızı alarm
+            redis_client.publish(f"logs_{deploy_id}", f"HATA: {chunk['error']}\n")
+            raise Exception(chunk['error'])
+            
+    redis_client.publish(f"logs_{deploy_id}", "Docker build başarıyla tamamlandı!\n")
+    return True
 
 def run_container(image_tag: str, container_name: str, host_port: int, container_port: int):
     client = docker.from_env()
-    print(f"Konteyner başlatılıyor: {container_name} -> Port: {host_port}")
-    
-    # YENİ: Sadece Detector'ün bulduğu doğru portu bağlıyoruz
     container = client.containers.run(
         image_tag,
         name=container_name,
@@ -24,6 +40,8 @@ def run_container(image_tag: str, container_name: str, host_port: int, container
         ports={f'{container_port}/tcp': host_port} 
     )
     return container
+
+
 
 def list_containers():
     client = docker.from_env()
