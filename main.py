@@ -4,7 +4,7 @@ import uuid
 from fastapi.middleware.cors import CORSMiddleware
 
 # YENİ: Aşçımızı (worker) ve görevimizi import ediyoruz
-from worker import build_and_deploy_task, celery_app
+from tasks.worker import build_and_deploy_task, celery_app
 
 app = FastAPI(title="CloudForge API")
 
