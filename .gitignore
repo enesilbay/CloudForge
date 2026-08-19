@@ -11,20 +11,30 @@ env/
 
 # Environment variables
 .env
+.env.local
+
+# Database & Local volumes
+postgres_data/
+*.sqlite
+*.db
+
+# Documentation / Internal Planning Docs
+roadmap.md
+proje.md
+render-vercel-platform-plani.md
 
 # Logs
 *.log
 
-# macOS
+# macOS & Windows
 .DS_Store
-
-# Windows
 Thumbs.db
 
 # React / Vite
 frontend/node_modules/
 frontend/dist/
 
-# IDE
+# IDE & Tooling
 .vscode/
 .idea/
+.agents/

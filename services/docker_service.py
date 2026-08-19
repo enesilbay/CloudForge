@@ -1,6 +1,10 @@
 import socket
 import docker
 import redis
+import os
+
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 
 def get_free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -11,7 +15,7 @@ def get_free_port():
 def build_image(repo_path: str, image_tag: str, deploy_id: str):
     client = docker.from_env()
     # Redis bağlantımızı kuruyoruz
-    redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+    redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
     
     redis_client.publish(f"logs_{deploy_id}", f"İmaj inşa ediliyor: {image_tag}\n")
     
