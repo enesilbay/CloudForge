@@ -14,6 +14,11 @@ from services.docker_service import list_containers, stop_container, remove_cont
 from db.database import engine, Base, get_db
 from db import models, schemas, crud
 
+# Redis Konfigürasyonu
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_URL = os.getenv("REDIS_URL", f"redis://{REDIS_HOST}:{REDIS_PORT}/0")
+
 # Veritabanı tablolarını otomatik oluştur
 Base.metadata.create_all(bind=engine)
 
@@ -31,18 +36,80 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-
 class DeployRequest(BaseModel):
     repo_url: str
     project_id: Optional[str] = None
 
+from fastapi.security import OAuth2PasswordBearer
+
+from services import auth_service
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
+
+def get_current_user(token: Optional[str] = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> Optional[models.User]:
+    if not token:
+        return None
+    payload = auth_service.decode_access_token(token)
+    if not payload or "sub" not in payload:
+        return None
+    user_id = payload["sub"]
+    return crud.get_user_by_id(db, user_id=user_id)
+
+# AUTH ENDPOINT'LERİ
+
+@app.post("/auth/register", response_model=schemas.TokenResponse)
+def register_user(user_in: schemas.UserRegister, db: Session = Depends(get_db)):
+    """Yeni kullanıcı kaydı oluşturur ve JWT token döner."""
+    if crud.get_user_by_username(db, user_in.username):
+        raise HTTPException(status_code=400, detail="Bu kullanıcı adı zaten kullanımda.")
+    if crud.get_user_by_email(db, user_in.email):
+        raise HTTPException(status_code=400, detail="Bu e-posta adresi zaten kullanımda.")
+
+    hashed_pw = auth_service.hash_password(user_in.password)
+    user = crud.create_user(db, username=user_in.username, email=user_in.email, password_hash=hashed_pw)
+
+    access_token = auth_service.create_access_token({"sub": user.id, "username": user.username})
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": schemas.UserResponse.model_validate(user)
+    }
+
+@app.post("/auth/login", response_model=schemas.TokenResponse)
+def login_user(login_in: schemas.UserLogin, db: Session = Depends(get_db)):
+    """Kullanıcı girişi yapar ve JWT token döner."""
+    user = crud.get_user_by_username(db, login_in.username_or_email) or crud.get_user_by_email(db, login_in.username_or_email)
+    if not user or not user.hashed_password:
+        raise HTTPException(status_code=400, detail="Geçersiz kullanıcı adı veya parola.")
+    
+    if not auth_service.verify_password(login_in.password, str(user.hashed_password)):
+        raise HTTPException(status_code=400, detail="Geçersiz kullanıcı adı veya parola.")
+
+    access_token = auth_service.create_access_token({"sub": user.id, "username": user.username})
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": schemas.UserResponse.model_validate(user)
+    }
+
+@app.get("/auth/me", response_model=schemas.UserResponse)
+def get_me(current_user: Optional[models.User] = Depends(get_current_user)):
+    """Mevcut giriş yapmış kullanıcının profil bilgilerini döner."""
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Oturum açılmamış.")
+    return current_user
+
 # PROJE ENDPOINT'LERİ (VERİTABANI ENTEGRASYONU)
 
 @app.post("/projects", response_model=schemas.ProjectResponse)
-def create_new_project(project_in: schemas.ProjectCreate, db: Session = Depends(get_db)):
+def create_new_project(
+    project_in: schemas.ProjectCreate,
+    current_user: Optional[models.User] = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Yeni bir proje oluşturur."""
-    project = crud.create_project(db, name=project_in.name, repo_url=project_in.repo_url)
+    user_id = str(current_user.id) if current_user else None
+    project = crud.create_project(db, name=project_in.name, repo_url=project_in.repo_url, user_id=user_id)
     return project
 
 @app.get("/projects", response_model=List[schemas.ProjectResponse])
@@ -57,6 +124,52 @@ def get_project_detail(project_id: str, db: Session = Depends(get_db)):
     if not project:
         raise HTTPException(status_code=404, detail="Proje bulunamadı")
     return project
+
+# ORTAM DEĞİŞKENLERİ & SECRETS ENDPOINT'LERİ
+
+@app.post("/projects/{project_id}/env", response_model=schemas.EnvVarResponse)
+def set_project_env_var(project_id: str, env_in: schemas.EnvVarCreate, db: Session = Depends(get_db)):
+    """Projeye yeni bir şifreli ortam değişkeni (secret) ekler veya günceller."""
+    project = crud.get_project_by_id(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı")
+
+    env_var = crud.create_or_update_env_var(
+        db,
+        project_id=project_id,
+        key=env_in.key,
+        value=env_in.value,
+        environment=env_in.environment,
+        is_secret=env_in.is_secret
+    )
+    decrypted_val = env_in.value
+    masked_val = crud.mask_secret(decrypted_val) if env_var.is_secret else decrypted_val
+    return {
+        "id": env_var.id,
+        "project_id": env_var.project_id,
+        "key": env_var.key,
+        "value_masked": masked_val,
+        "environment": env_var.environment,
+        "is_secret": env_var.is_secret,
+        "created_at": env_var.created_at,
+        "updated_at": env_var.updated_at
+    }
+
+@app.get("/projects/{project_id}/env", response_model=List[schemas.EnvVarResponse])
+def get_project_env_vars(project_id: str, db: Session = Depends(get_db)):
+    """Projeye ait tüm maskelenmiş ortam değişkenlerini getirir."""
+    project = crud.get_project_by_id(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı")
+    return crud.get_env_vars_by_project(db, project_id=project_id)
+
+@app.delete("/projects/{project_id}/env/{env_id}")
+def delete_project_env_var(project_id: str, env_id: str, db: Session = Depends(get_db)):
+    """Bir ortam değişkenini siler."""
+    success = crud.delete_env_var(db, env_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Ortam değişkeni bulunamadı")
+    return {"status": "success", "message": "Ortam değişkeni silindi"}
 
 # DEPLOYMENT ENDPOINT'LERİ (VERİTABANI ENTEGRASYONU)
 
@@ -76,8 +189,9 @@ def deploy_app(request: DeployRequest, db: Session = Depends(get_db)):
         deploy_id=deploy_id
     )
     
-    # 2. Celery kuyruğuna işi at
-    task = build_and_deploy_task.delay(request.repo_url, deploy_id)
+    # 2. Celery kuyruğuna işi at (project_id ile birlikte)
+    task = build_and_deploy_task.delay(request.repo_url, deploy_id, project_id=request.project_id)
+
     
     return {
         "status": "processing",
@@ -150,9 +264,11 @@ async def websocket_logs(websocket: WebSocket, deploy_id: str):
             message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
             if message:
                 log_data = message["data"]
-                await websocket.send_text(log_data)
-                if log_data == "EOF":
-                    break
+                if log_data is not None:
+                    text_content = str(log_data)
+                    await websocket.send_text(text_content)
+                    if text_content == "EOF":
+                        break
             await asyncio.sleep(0.1)
     except Exception as e:
         await websocket.send_text(f"Log bağlantı hatası: {str(e)}")
