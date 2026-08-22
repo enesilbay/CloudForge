@@ -16,4 +16,7 @@ def cleanup_repo(repo, temp_dir: str):
     if repo:
         repo.close()
     if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir, onexc=remove_readonly)
+        try:
+            shutil.rmtree(temp_dir, onerror=remove_readonly)
+        except TypeError:
+            shutil.rmtree(temp_dir, onexc=remove_readonly)

@@ -20,7 +20,7 @@ celery_app = Celery(
 )
 
 @celery_app.task(bind=True)
-def build_and_deploy_task(self, repo_url, deploy_id):
+def build_and_deploy_task(self, repo_url, deploy_id, project_id=None):
     temp_dir = tempfile.mkdtemp()
     repo = None
     redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
@@ -43,15 +43,23 @@ def build_and_deploy_task(self, repo_url, deploy_id):
         
         build_image(temp_dir, image_tag, deploy_id)
 
-        emit_log("Konteyner başlatılıyor...\n")
+        # Projeye özel şifrelenmiş ortam değişkenlerini (secrets) çöz ve hazırlayıp enjekte et
+        env_vars = {}
+        if project_id:
+            with SessionLocal() as db:
+                env_vars = crud.get_decrypted_env_dict_for_project(db, project_id=project_id)
+                if env_vars:
+                    emit_log(f"[ENV] {len(env_vars)} ortam degiskeni (secrets) konteynere enjekte ediliyor...\n")
+
+        emit_log("Konteyner baslatiliyor...\n")
         host_port = get_free_port()
         
-        run_container(image_tag, container_name, host_port, container_port)
+        run_container(image_tag, container_name, host_port, container_port, env_vars=env_vars)
 
-        success_msg = f"🚀 Uygulama yayında! Port: {host_port}\n"
+        success_msg = f"[SUCCESS] Uygulama yayinda! Port: {host_port}\n"
         redis_client.publish(f"logs_{deploy_id}", success_msg)
 
-        # Veritabanında Başarılı olarak güncelle
+        # Veritabaninda Basarili olarak guncelle
         with SessionLocal() as db:
             crud.update_deployment_status(
                 db,
@@ -66,7 +74,7 @@ def build_and_deploy_task(self, repo_url, deploy_id):
         
         return {
             "status": "success",
-            "message": "Uygulama başarıyla canlıya alındı!",
+            "message": "Uygulama basariyla canliya alindi!",
             "details": algilama_mesaji,
             "deploy_id": deploy_id,
             "url": f"http://localhost:{host_port}",
@@ -74,7 +82,7 @@ def build_and_deploy_task(self, repo_url, deploy_id):
         }
         
     except Exception as e:
-        error_msg = f"❌ Kritik Hata: {str(e)}\n"
+        error_msg = f"[ERROR] Kritik Hata: {str(e)}\n"
         redis_client.publish(f"logs_{deploy_id}", error_msg)
         with SessionLocal() as db:
             crud.update_deployment_status(

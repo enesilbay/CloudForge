@@ -35,15 +35,25 @@ def build_image(repo_path: str, image_tag: str, deploy_id: str):
     redis_client.publish(f"logs_{deploy_id}", "Docker build başarıyla tamamlandı!\n")
     return True
 
-def run_container(image_tag: str, container_name: str, host_port: int, container_port: int):
+from typing import Optional
+
+def run_container(
+    image_tag: str,
+    container_name: str,
+    host_port: int,
+    container_port: int,
+    env_vars: Optional[dict] = None
+):
     client = docker.from_env()
     container = client.containers.run(
         image_tag,
         name=container_name,
         detach=True,
-        ports={f'{container_port}/tcp': host_port} 
+        ports={f'{container_port}/tcp': host_port},
+        environment=env_vars if env_vars else {}
     )
     return container
+
 
 
 
