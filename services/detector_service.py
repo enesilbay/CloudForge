@@ -3,6 +3,14 @@ import json
 import re
 from typing import Any, Dict, Set, Tuple
 
+from services.dockerfile_templates import (
+    create_react_app_dockerfile,
+    next_dockerfile,
+    node_server_dockerfile,
+    python_dockerfile,
+    vite_dockerfile,
+)
+
 
 def _normalize_dependency_name(name: str) -> str:
     return name.strip().lower().replace("_", "-")
@@ -88,15 +96,15 @@ def _detect_node_project(repo_path: str) -> Tuple[str, int, str]:
     if "vite" in dependencies:
         return (
             "Vite projesi tespit edildi (package.json bağımlılık analizi).",
-            5173,
-            'CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]',
+            8080,
+            vite_dockerfile(),
         )
 
     if "next" in dependencies:
         return (
             "Next.js projesi tespit edildi (package.json bağımlılık analizi).",
             3000,
-            'CMD ["npm", "run", "dev", "--", "--hostname", "0.0.0.0"]',
+            next_dockerfile(),
         )
 
     if "express" in dependencies:
@@ -109,34 +117,38 @@ def _detect_node_project(repo_path: str) -> Tuple[str, int, str]:
         return (
             "Express projesi tespit edildi (package.json bağımlılık analizi).",
             3000,
-            start_cmd,
+            node_server_dockerfile(start_cmd=start_cmd, port=3000),
         )
 
     if "react-scripts" in dependencies:
         return (
             "Create React App projesi tespit edildi (package.json bağımlılık analizi).",
-            3000,
-            'CMD ["npm", "start"]',
+            8080,
+            create_react_app_dockerfile(),
         )
 
     if "start" in scripts:
         return (
             "Node.js projesi tespit edildi (package.json scripts.start analizi).",
             3000,
-            'CMD ["npm", "start"]',
+            node_server_dockerfile(start_cmd='CMD ["npm", "start"]', port=3000),
         )
 
     if "dev" in scripts:
         return (
             "Node.js projesi tespit edildi (package.json scripts.dev analizi).",
             3000,
-            'CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]',
+            node_server_dockerfile(
+                start_cmd='CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]',
+                port=3000,
+                production_only=False,
+            ),
         )
 
     return (
         "Node.js projesi tespit edildi (package.json bulundu).",
         3000,
-        'CMD ["npm", "start"]',
+        node_server_dockerfile(start_cmd='CMD ["npm", "start"]', port=3000),
     )
 
 
@@ -153,20 +165,30 @@ def _find_asgi_module(repo_path: str) -> str:
 def _detect_python_project(repo_path: str) -> Tuple[str, int, str]:
     dependencies = _read_requirements_txt(repo_path) | _read_pyproject_toml(repo_path)
     files = os.listdir(repo_path)
+    install_target = "requirements" if "requirements.txt" in files else "pyproject"
 
     if "fastapi" in dependencies:
         asgi_module = _find_asgi_module(repo_path)
         return (
             "FastAPI projesi tespit edildi (requirements/pyproject bağımlılık analizi).",
             8000,
-            f'CMD ["uvicorn", "{asgi_module}", "--host", "0.0.0.0", "--port", "8000"]',
+            python_dockerfile(
+                start_cmd=f'CMD ["uvicorn", "{asgi_module}", "--host", "0.0.0.0", "--port", "8000"]',
+                port=8000,
+                install_target=install_target,
+                extra_packages=[] if "uvicorn" in dependencies else ["uvicorn"],
+            ),
         )
 
     if "django" in dependencies and "manage.py" in files:
         return (
             "Django projesi tespit edildi (requirements/pyproject bağımlılık analizi).",
             8000,
-            'CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]',
+            python_dockerfile(
+                start_cmd='CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]',
+                port=8000,
+                install_target=install_target,
+            ),
         )
 
     if "flask" in dependencies:
@@ -174,7 +196,11 @@ def _detect_python_project(repo_path: str) -> Tuple[str, int, str]:
         return (
             "Flask projesi tespit edildi (requirements/pyproject bağımlılık analizi).",
             8000,
-            f'CMD ["flask", "--app", "{app_module}", "run", "--host", "0.0.0.0", "--port", "8000"]',
+            python_dockerfile(
+                start_cmd=f'CMD ["flask", "--app", "{app_module}", "run", "--host", "0.0.0.0", "--port", "8000"]',
+                port=8000,
+                install_target=install_target,
+            ),
         )
 
     if "streamlit" in dependencies:
@@ -182,13 +208,22 @@ def _detect_python_project(repo_path: str) -> Tuple[str, int, str]:
         return (
             "Streamlit projesi tespit edildi (requirements/pyproject bağımlılık analizi).",
             8501,
-            f'CMD ["streamlit", "run", "{entrypoint}", "--server.address=0.0.0.0", "--server.port=8501"]',
+            python_dockerfile(
+                start_cmd=f'CMD ["streamlit", "run", "{entrypoint}", "--server.address=0.0.0.0", "--server.port=8501"]',
+                port=8501,
+                install_target=install_target,
+            ),
         )
 
     return (
         "Python projesi tespit edildi (requirements.txt veya pyproject.toml bulundu).",
         8000,
-        'CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]',
+        python_dockerfile(
+            start_cmd='CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]',
+            port=8000,
+            install_target=install_target,
+            extra_packages=[] if "uvicorn" in dependencies else ["uvicorn"],
+        ),
     )
 
 
@@ -222,37 +257,16 @@ def process_dockerfile(repo_path: str):
         return f"Projede mevcut Dockerfile bulundu, EXPOSE portu {exposed_port} olarak algılandı.", exposed_port
         
     elif "package.json" in dosyalar:
-        detected_msg, target_port, start_cmd = _detect_node_project(repo_path)
-
-        dockerfile_icerigi = f"""FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm install --ignore-scripts
-COPY . .
-EXPOSE {target_port}
-{start_cmd}
-"""
+        detected_msg, target_port, dockerfile_icerigi = _detect_node_project(repo_path)
         with open(os.path.join(repo_path, "Dockerfile"), "w", encoding="utf-8") as f:
             f.write(dockerfile_icerigi)
-        return f"{detected_msg} Otomatik Node.js Dockerfile oluşturuldu.", target_port
+        return f"{detected_msg} Optimize edilmiş Node.js Dockerfile şablonu oluşturuldu.", target_port
         
     elif "requirements.txt" in dosyalar or "pyproject.toml" in dosyalar:
-        detected_msg, target_port, start_cmd = _detect_python_project(repo_path)
-        if "requirements.txt" in dosyalar:
-            install_cmd = "RUN pip install --no-cache-dir uvicorn && pip install --no-cache-dir -r requirements.txt"
-        else:
-            install_cmd = "RUN pip install --no-cache-dir uvicorn && pip install --no-cache-dir ."
-
-        dockerfile_icerigi = f"""FROM python:3.10-slim
-WORKDIR /app
-COPY . /app
-{install_cmd}
-EXPOSE {target_port}
-{start_cmd}
-"""
+        detected_msg, target_port, dockerfile_icerigi = _detect_python_project(repo_path)
         with open(os.path.join(repo_path, "Dockerfile"), "w", encoding="utf-8") as f:
             f.write(dockerfile_icerigi)
-        return f"{detected_msg} Otomatik Python Dockerfile oluşturuldu.", target_port
+        return f"{detected_msg} Optimize edilmiş Python Dockerfile şablonu oluşturuldu.", target_port
         
     else:
         raise Exception("Desteklenmeyen proje! İçinde Dockerfile, requirements.txt veya package.json bulunmalı.")
