@@ -34,14 +34,29 @@ def build_and_deploy_task(self, repo_url, deploy_id, project_id=None):
         emit_log(f"Klonlanıyor: {repo_url}\n", status="BUILDING")
         repo = clone_repo(repo_url, temp_dir)
 
+        build_settings = None
+        if project_id:
+            with SessionLocal() as db:
+                settings = crud.get_build_settings(db, project_id=project_id)
+                if settings:
+                    build_settings = {
+                        "root_directory": settings.root_directory,
+                        "install_command": settings.install_command,
+                        "build_command": settings.build_command,
+                        "start_command": settings.start_command,
+                        "output_directory": settings.output_directory,
+                        "port": settings.port,
+                    }
+                    emit_log("[BUILD SETTINGS] Custom build ayarlari uygulanacak.\n")
+
         emit_log("Proje yapısı analiz ediliyor...\n")
-        algilama_mesaji, container_port = process_dockerfile(temp_dir)
+        algilama_mesaji, container_port, build_path = process_dockerfile(temp_dir, build_settings=build_settings)
         emit_log(f"{algilama_mesaji}\n")
         
         image_tag = f"cloudforge-app:{deploy_id}"
         container_name = f"cf-app-{deploy_id}"
         
-        build_image(temp_dir, image_tag, deploy_id)
+        build_image(build_path, image_tag, deploy_id)
 
         # Projeye özel şifrelenmiş ortam değişkenlerini (secrets) çöz ve hazırlayıp enjekte et
         env_vars = {}

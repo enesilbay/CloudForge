@@ -31,6 +31,19 @@ function App() {
   const [newEnv, setNewEnv] = useState({ key: '', value: '', environment: 'production', is_secret: true });
   const [envLoading, setEnvLoading] = useState(false);
 
+  // Build settings state
+  const emptyBuildSettings = {
+    root_directory: '',
+    install_command: '',
+    build_command: '',
+    start_command: '',
+    output_directory: '',
+    port: ''
+  };
+  const [buildSettings, setBuildSettings] = useState(emptyBuildSettings);
+  const [buildSettingsLoading, setBuildSettingsLoading] = useState(false);
+  const [buildSettingsSaved, setBuildSettingsSaved] = useState(false);
+
   // Initial load & Current user fetch
   useEffect(() => {
     if (token) {
@@ -47,8 +60,10 @@ function App() {
   useEffect(() => {
     if (selectedProjectId) {
       fetchEnvVars(selectedProjectId);
+      fetchBuildSettings(selectedProjectId);
     } else {
       setEnvVars([]);
+      setBuildSettings(emptyBuildSettings);
     }
   }, [selectedProjectId]);
 
@@ -199,6 +214,80 @@ function App() {
       }
     } catch (err) {
       alert('Silme hatası.');
+    }
+  };
+
+  const fetchBuildSettings = async (projectId) => {
+    setBuildSettingsLoading(true);
+    setBuildSettingsSaved(false);
+    try {
+      const res = await fetch(`${API_BASE}/projects/${projectId}/build-settings`);
+      if (res.status === 200) {
+        const data = await res.json();
+        if (data) {
+          setBuildSettings({
+            root_directory: data.root_directory || '',
+            install_command: data.install_command || '',
+            build_command: data.build_command || '',
+            start_command: data.start_command || '',
+            output_directory: data.output_directory || '',
+            port: data.port ? String(data.port) : ''
+          });
+        } else {
+          setBuildSettings(emptyBuildSettings);
+        }
+      }
+    } catch (err) {
+      console.error('Build ayarları yüklenirken hata:', err);
+    } finally {
+      setBuildSettingsLoading(false);
+    }
+  };
+
+  const handleBuildSettingsChange = (field, value) => {
+    setBuildSettingsSaved(false);
+    setBuildSettings((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSaveBuildSettings = async (e) => {
+    e.preventDefault();
+    if (!selectedProjectId) return;
+
+    const payload = {
+      root_directory: buildSettings.root_directory.trim() || null,
+      install_command: buildSettings.install_command.trim() || null,
+      build_command: buildSettings.build_command.trim() || null,
+      start_command: buildSettings.start_command.trim() || null,
+      output_directory: buildSettings.output_directory.trim() || null,
+      port: buildSettings.port ? Number(buildSettings.port) : null
+    };
+
+    setBuildSettingsLoading(true);
+    setBuildSettingsSaved(false);
+    try {
+      const res = await fetch(`${API_BASE}/projects/${selectedProjectId}/build-settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setBuildSettings({
+          root_directory: data.root_directory || '',
+          install_command: data.install_command || '',
+          build_command: data.build_command || '',
+          start_command: data.start_command || '',
+          output_directory: data.output_directory || '',
+          port: data.port ? String(data.port) : ''
+        });
+        setBuildSettingsSaved(true);
+      } else {
+        alert(data.detail || 'Build ayarları kaydedilemedi.');
+      }
+    } catch (err) {
+      alert('Build ayarları kaydedilirken hata oluştu.');
+    } finally {
+      setBuildSettingsLoading(false);
     }
   };
 
@@ -576,6 +665,105 @@ function App() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* CUSTOM BUILD SETTINGS */}
+      {selectedProjectId && (
+        <div className="w-full max-w-4xl bg-gray-900 border border-gray-800 p-6 rounded-2xl shadow-xl mb-8">
+          <div className="flex justify-between items-start gap-4 mb-5">
+            <div>
+              <h3 className="text-lg font-bold text-gray-100">⚙️ Custom Build Settings</h3>
+              <p className="text-xs text-gray-400">
+                Boş bıraktığın alanlarda CloudForge otomatik framework tespitini kullanır.
+              </p>
+            </div>
+            {buildSettingsSaved && (
+              <span className="text-xs text-green-400 bg-green-950/60 border border-green-800/50 px-2.5 py-1 rounded-full">
+                Kaydedildi
+              </span>
+            )}
+          </div>
+
+          <form onSubmit={handleSaveBuildSettings} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-400 mb-1">Root Directory</label>
+              <input
+                type="text"
+                placeholder="frontend veya apps/web"
+                className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500"
+                value={buildSettings.root_directory}
+                onChange={(e) => handleBuildSettingsChange('root_directory', e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-400 mb-1">Port</label>
+              <input
+                type="number"
+                min="1"
+                max="65535"
+                placeholder="3000, 5173, 8000"
+                className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500"
+                value={buildSettings.port}
+                onChange={(e) => handleBuildSettingsChange('port', e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-400 mb-1">Install Command</label>
+              <input
+                type="text"
+                placeholder="npm install veya pip install -r requirements.txt"
+                className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500"
+                value={buildSettings.install_command}
+                onChange={(e) => handleBuildSettingsChange('install_command', e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-400 mb-1">Build Command</label>
+              <input
+                type="text"
+                placeholder="npm run build"
+                className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500"
+                value={buildSettings.build_command}
+                onChange={(e) => handleBuildSettingsChange('build_command', e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-400 mb-1">Start Command</label>
+              <input
+                type="text"
+                placeholder="npm start veya uvicorn main:app --host 0.0.0.0 --port 8000"
+                className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500"
+                value={buildSettings.start_command}
+                onChange={(e) => handleBuildSettingsChange('start_command', e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-400 mb-1">Output Directory</label>
+              <input
+                type="text"
+                placeholder="dist veya build"
+                className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500"
+                value={buildSettings.output_directory}
+                onChange={(e) => handleBuildSettingsChange('output_directory', e.target.value)}
+              />
+            </div>
+
+            <div className="md:col-span-2 flex justify-end">
+              <button
+                type="submit"
+                disabled={buildSettingsLoading}
+                className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold py-2.5 px-5 rounded-lg transition-colors disabled:opacity-60"
+              >
+                {buildSettingsLoading ? 'Kaydediliyor...' : 'Build Ayarlarını Kaydet'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
 from datetime import datetime
 
@@ -46,6 +46,34 @@ class EnvVarResponse(BaseModel):
     class Config:
         from_attributes = True
 
+# Build Settings Schemas
+class BuildSettingsBase(BaseModel):
+    root_directory: Optional[str] = None
+    install_command: Optional[str] = None
+    build_command: Optional[str] = None
+    start_command: Optional[str] = None
+    output_directory: Optional[str] = None
+    port: Optional[int] = None
+
+    @field_validator("port")
+    @classmethod
+    def validate_port(cls, value: Optional[int]) -> Optional[int]:
+        if value is not None and not 1 <= value <= 65535:
+            raise ValueError("Port 1 ile 65535 arasında olmalı.")
+        return value
+
+class BuildSettingsUpdate(BuildSettingsBase):
+    pass
+
+class BuildSettingsResponse(BuildSettingsBase):
+    id: str
+    project_id: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
 # Deployment Schemas
 class DeploymentBase(BaseModel):
     repo_url: str
@@ -87,6 +115,7 @@ class ProjectResponse(BaseModel):
     updated_at: datetime
     deployments: List[DeploymentResponse] = []
     env_vars: List[EnvVarResponse] = []
+    build_settings: Optional[BuildSettingsResponse] = None
 
     class Config:
         from_attributes = True

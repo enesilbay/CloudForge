@@ -35,6 +35,7 @@ class Project(Base):
     owner: Mapped[Optional["User"]] = relationship("User", back_populates="projects")
     deployments: Mapped[List["Deployment"]] = relationship("Deployment", back_populates="project", cascade="all, delete-orphan")
     env_vars: Mapped[List["EnvironmentVariable"]] = relationship("EnvironmentVariable", back_populates="project", cascade="all, delete-orphan")
+    build_settings: Mapped[Optional["ProjectBuildSettings"]] = relationship("ProjectBuildSettings", back_populates="project", cascade="all, delete-orphan")
 
 class EnvironmentVariable(Base):
     __tablename__ = "env_variables"
@@ -49,6 +50,23 @@ class EnvironmentVariable(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     project: Mapped["Project"] = relationship("Project", back_populates="env_vars")
+
+
+class ProjectBuildSettings(Base):
+    __tablename__ = "project_build_settings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"), unique=True, nullable=False, index=True)
+    root_directory: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    install_command: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    build_command: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    start_command: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    output_directory: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    port: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    project: Mapped["Project"] = relationship("Project", back_populates="build_settings")
 
 
 class Deployment(Base):

@@ -1,7 +1,15 @@
+import json
 from typing import List, Optional
 
 
-def _node_install_command(production_only: bool = False) -> str:
+def shell_cmd(command: str) -> str:
+    return json.dumps(["sh", "-c", command])
+
+
+def node_install_command(custom_command: Optional[str] = None, production_only: bool = False) -> str:
+    if custom_command:
+        return f"RUN {custom_command}"
+
     omit_dev = " --omit=dev" if production_only else ""
     return (
         "RUN if [ -f package-lock.json ]; then "
@@ -12,95 +20,82 @@ def _node_install_command(production_only: bool = False) -> str:
     )
 
 
-def vite_dockerfile() -> str:
-    return """FROM node:20-alpine AS builder
+def static_node_dockerfile(
+    build_command: str,
+    output_directory: str,
+    install_command: Optional[str] = None,
+) -> str:
+    return f"""FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi
+{node_install_command(install_command)}
 COPY . .
-RUN npm run build
+RUN {build_command}
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runner
-COPY --from=builder /app/dist /usr/share/nginx/html
+COPY --from=builder /app/{output_directory} /usr/share/nginx/html
 USER nginx
 EXPOSE 8080
 CMD ["nginx", "-g", "daemon off;"]
 """
+
+
+def vite_dockerfile() -> str:
+    return static_node_dockerfile(build_command="npm run build", output_directory="dist")
 
 
 def create_react_app_dockerfile() -> str:
-    return """FROM node:20-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi
-COPY . .
-RUN npm run build
-
-FROM nginxinc/nginx-unprivileged:1.27-alpine AS runner
-COPY --from=builder /app/build /usr/share/nginx/html
-USER nginx
-EXPOSE 8080
-CMD ["nginx", "-g", "daemon off;"]
-"""
+    return static_node_dockerfile(build_command="npm run build", output_directory="build")
 
 
 def next_dockerfile() -> str:
-    return """FROM node:20-alpine AS deps
-WORKDIR /app
-COPY package*.json ./
-RUN if [ -f package-lock.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi
-
-FROM node:20-alpine AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-RUN npm run build
-
-FROM node:20-alpine AS runner
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-USER node
-EXPOSE 3000
-CMD ["npm", "start"]
-"""
+    return node_server_dockerfile(
+        start_command="npm start",
+        port=3000,
+        build_command="npm run build",
+    )
 
 
-def node_server_dockerfile(start_cmd: str, port: int = 3000, production_only: bool = True) -> str:
-    install_cmd = _node_install_command(production_only=production_only)
+def node_server_dockerfile(
+    start_command: str,
+    port: int = 3000,
+    install_command: Optional[str] = None,
+    build_command: Optional[str] = None,
+    production_only: bool = True,
+) -> str:
+    build_step = f"RUN {build_command}\n" if build_command else ""
+    install_production_only = production_only and not build_command
     return f"""FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package*.json ./
-{install_cmd}
+{node_install_command(install_command, production_only=install_production_only)}
 
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-USER node
+{build_step}USER node
 EXPOSE {port}
-{start_cmd}
+CMD {shell_cmd(start_command)}
 """
 
 
 def python_dockerfile(
-    start_cmd: str,
+    start_command: str,
     port: int = 8000,
-    install_target: Optional[str] = None,
-    extra_packages: Optional[List[str]] = None,
+    install_command: Optional[str] = None,
+    has_requirements: bool = True,
+    extra_install_command: Optional[str] = None,
 ) -> str:
-    dependency_install = (
-        "RUN pip install --no-cache-dir -r requirements.txt"
-        if install_target == "requirements"
-        else "RUN pip install --no-cache-dir ."
-    )
-    extra_install = ""
-    if extra_packages:
-        extra_install = f"RUN pip install --no-cache-dir {' '.join(extra_packages)}\n"
+    if install_command:
+        dependency_install = f"RUN {install_command}"
+    elif has_requirements:
+        dependency_install = "RUN pip install --no-cache-dir -r requirements.txt"
+    else:
+        dependency_install = "RUN pip install --no-cache-dir ."
+
+    extra_install = f"RUN {extra_install_command}\n" if extra_install_command else ""
 
     return f"""FROM python:3.12-slim AS builder
 WORKDIR /app
@@ -118,5 +113,6 @@ COPY . .
 RUN adduser --disabled-password --gecos "" appuser && chown -R appuser:appuser /app
 USER appuser
 EXPOSE {port}
-{start_cmd}
+CMD {shell_cmd(start_command)}
 """
+

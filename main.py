@@ -125,6 +125,38 @@ def get_project_detail(project_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Proje bulunamadı")
     return project
 
+# BUILD SETTINGS ENDPOINT'LERİ
+
+@app.get("/projects/{project_id}/build-settings", response_model=Optional[schemas.BuildSettingsResponse])
+def get_project_build_settings(project_id: str, db: Session = Depends(get_db)):
+    """Projeye ait custom build ayarlarını getirir."""
+    project = crud.get_project_by_id(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı")
+    return crud.get_build_settings(db, project_id)
+
+@app.put("/projects/{project_id}/build-settings", response_model=schemas.BuildSettingsResponse)
+def update_project_build_settings(
+    project_id: str,
+    settings_in: schemas.BuildSettingsUpdate,
+    db: Session = Depends(get_db)
+):
+    """Projeye ait custom build ayarlarını oluşturur veya günceller."""
+    project = crud.get_project_by_id(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Proje bulunamadı")
+
+    return crud.upsert_build_settings(
+        db,
+        project_id=project_id,
+        root_directory=settings_in.root_directory,
+        install_command=settings_in.install_command,
+        build_command=settings_in.build_command,
+        start_command=settings_in.start_command,
+        output_directory=settings_in.output_directory,
+        port=settings_in.port
+    )
+
 # ORTAM DEĞİŞKENLERİ & SECRETS ENDPOINT'LERİ
 
 @app.post("/projects/{project_id}/env", response_model=schemas.EnvVarResponse)

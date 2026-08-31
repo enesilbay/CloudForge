@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import List, Optional, Dict
 from sqlalchemy.orm import Session
-from db.models import User, Project, Deployment, EnvironmentVariable
+from db.models import User, Project, Deployment, EnvironmentVariable, ProjectBuildSettings
 from services.crypto_service import encrypt_secret, decrypt_secret
 
 # User CRUD
@@ -37,6 +37,37 @@ def get_projects(db: Session, user_id: Optional[str] = None, skip: int = 0, limi
     if user_id:
         query = query.filter(Project.user_id == user_id)
     return query.order_by(Project.created_at.desc()).offset(skip).limit(limit).all()
+
+# Build Settings CRUD
+def get_build_settings(db: Session, project_id: str) -> Optional[ProjectBuildSettings]:
+    return db.query(ProjectBuildSettings).filter(ProjectBuildSettings.project_id == project_id).first()
+
+def upsert_build_settings(
+    db: Session,
+    project_id: str,
+    root_directory: Optional[str] = None,
+    install_command: Optional[str] = None,
+    build_command: Optional[str] = None,
+    start_command: Optional[str] = None,
+    output_directory: Optional[str] = None,
+    port: Optional[int] = None
+) -> ProjectBuildSettings:
+    settings = get_build_settings(db, project_id)
+    if not settings:
+        settings = ProjectBuildSettings(project_id=project_id)
+        db.add(settings)
+
+    settings.root_directory = root_directory
+    settings.install_command = install_command
+    settings.build_command = build_command
+    settings.start_command = start_command
+    settings.output_directory = output_directory
+    settings.port = port
+    settings.updated_at = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(settings)
+    return settings
 
 # Environment Variables & Secrets CRUD
 def mask_secret(value: str) -> str:
