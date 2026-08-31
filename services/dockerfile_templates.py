@@ -1,5 +1,5 @@
 import json
-from typing import Optional
+from typing import List, Optional
 
 
 def shell_cmd(command: str) -> str:
@@ -38,6 +38,22 @@ USER nginx
 EXPOSE 8080
 CMD ["nginx", "-g", "daemon off;"]
 """
+
+
+def vite_dockerfile() -> str:
+    return static_node_dockerfile(build_command="npm run build", output_directory="dist")
+
+
+def create_react_app_dockerfile() -> str:
+    return static_node_dockerfile(build_command="npm run build", output_directory="build")
+
+
+def next_dockerfile() -> str:
+    return node_server_dockerfile(
+        start_command="npm start",
+        port=3000,
+        build_command="npm run build",
+    )
 
 
 def node_server_dockerfile(
@@ -99,3 +115,4 @@ USER appuser
 EXPOSE {port}
 CMD {shell_cmd(start_command)}
 """
+

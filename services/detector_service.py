@@ -4,9 +4,12 @@ import re
 from typing import Any, Dict, Optional, Set, Tuple
 
 from services.dockerfile_templates import (
+    create_react_app_dockerfile,
+    next_dockerfile,
     node_server_dockerfile,
     python_dockerfile,
     static_node_dockerfile,
+    vite_dockerfile,
 )
 
 
@@ -385,3 +388,4 @@ def process_dockerfile(repo_path: str, build_settings: Optional[BuildSettingsDic
         
     else:
         raise Exception("Desteklenmeyen proje! İçinde Dockerfile, requirements.txt veya package.json bulunmalı.")
+
