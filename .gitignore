@@ -42,3 +42,6 @@ frontend/dist/
 .agents/
 pyrefly.toml
 pyrightconfig.json
+
+# Claude Code (makineye özel)
+.claude/settings.local.json
